@@ -9,6 +9,9 @@ from langchain_community.utilities import GoogleSerperAPIWrapper
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 import streamlit as st
+import re
+import youtube_transcript_api
+from youtube_transcript_api import YouTubeTranscriptApi
 
 # Page Config for Better UI
 st.set_page_config(page_title="StudyGenie AI", page_icon="🤖", layout="wide")
@@ -69,12 +72,64 @@ st.title("StudyGenie AI 🤖")
 st.markdown("### Your Intelligent Study Companion")
 st.write("Upload your notes, books, or data and ask anything related to your studies!")
 
-# Sidebar for Study Material Hub
-st.sidebar.title("📚 Study Material Hub")
-choice = st.sidebar.selectbox(
-    "Select Format",
-    ("Text", "PDF", "Word Document", "PPT", "Excel", "CSV")
-)
+#Different Tabs at Home Page
+tab_chat,tab_video=st.tabs(["Chat","Video to Text"])
+
+with tab_video:
+    st.title("🎥 Lecture Video to Notes")
+
+    video_url = st.text_input(
+        "Paste lecture video link (YouTube / Drive)",
+        placeholder="https://www.youtube.com/watch?v=..."
+    )
+
+    note_style = st.selectbox(
+        "Notes Format",
+        ["Short Notes", "Detailed Notes", "Bullet Points", "Exam-Oriented"]
+    )
+
+    def get_video_id(url):
+        pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+        match = re.search(pattern, url)
+        return match.group(1) if match else None
+
+    if st.button("Generate Notes"):
+        if video_url:
+            with st.spinner("⏳ Extracting transcript and generating notes..."):
+                try:
+                    video_id = get_video_id(video_url)
+                    if not video_id:
+                        st.error("Invalid YouTube URL")
+                        st.stop()
+                    # Use fully qualified name to avoid any potential namespace issues
+                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+                    transcript_text = " ".join([i['text'] for i in transcript_list])
+                    
+                    # Use the transcript to generate accurate notes
+                    prompt = f"""
+                    You are StudyGenie AI. Convert the following lecture transcript into {note_style}.
+                    Ensure the notes are accurate, easy to understand, and follow a logical structure.
+                    
+                    TRANSCRIPT:
+                    {transcript_text[:15000]} # Limit to handle long videos
+                    """
+                    
+                    response = llm.invoke(prompt)
+                    st.success("✅ Notes Generated")
+                    
+                    st.markdown("### 📘 Generated Notes")
+                    # Handle response content clean display
+                    raw_content = response.content
+                    if isinstance(raw_content, list):
+                        clean_content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_content])
+                    else:
+                        clean_content = str(raw_content)
+                    st.markdown(clean_content)
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    st.info("Try another video or ensure the video has subtitles/transcripts enabled.")
+        else:
+            st.warning("Please enter a YouTube video link")
 
 def extract_text(files, format_choice):
     text_content = ""
@@ -106,6 +161,13 @@ def extract_text(files, format_choice):
             text_content += df.to_string() + "\n"
     return text_content
 
+# Sidebar for Study Material Hub
+st.sidebar.title("📚 Study Material Hub")
+choice = st.sidebar.selectbox(
+    "Select Format",
+    ("Text", "PDF", "Word Document", "PPT", "Excel", "CSV")
+)
+
 with st.sidebar:
     uploaded_files = st.file_uploader(f"Upload {choice}", type=None, accept_multiple_files=True)
     if uploaded_files:
@@ -116,17 +178,21 @@ with st.sidebar:
             st.session_state.materials_text = extracted_text
             st.success(f"Successfully loaded {len(uploaded_files)} file(s)!")
 
-# Chat Display
-for message in st.session_state.history:
-    st.chat_message(message["role"]).markdown(message["content"])
+with tab_chat:
+    # Chat Display
+    for message in st.session_state.history:
+        st.chat_message(message["role"]).markdown(message["content"])
 
+# Chat input MUST be at the top level (not inside tabs)
 query = st.chat_input("Ask a study question...")
 
 if query:
+    # We can check which tab is currently active if needed, 
+    # but usually chat input at bottom is expected behavior.
     st.chat_message("user").markdown(query)
     st.session_state.history.append({"role": "user", "content": query})
 
-    # Construct the query with context if available - Using a larger chunk of text since Gemini supports it
+    # Construct the query with context if available
     full_prompt = query
     if st.session_state.materials_text:
         # Increase context window to 15000 characters for better book/document coverage
@@ -145,15 +211,10 @@ if query:
     # Handle various response formats from the model
     raw_answer = response["messages"][-1].content
     if isinstance(raw_answer, list):
-        final_answer = ""
-        for part in raw_answer:
-            if isinstance(part, dict) and "text" in part:
-                final_answer += part["text"]
-            elif isinstance(part, str):
-                final_answer += part
-        answer = final_answer
+        answer = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_answer])
     else:
         answer = str(raw_answer)
 
     st.session_state.history.append({"role": "ai", "content": answer})
     st.chat_message("ai").markdown(answer)
+    # Note: Because the script reruns, the new message will appear inside the Chat tab on the next pass.
