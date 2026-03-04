@@ -61,7 +61,7 @@ if st.sidebar.button("➕ New Chat", use_container_width=True):
 # Initialize LLM and Tools
 # Using gemini-1.5-flash for stability; ensure you have set GOOGLE_API_KEY in Streamlit Secrets or .env
 api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
+llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", google_api_key=api_key)
 
 serper_api_key = st.secrets.get("SERPER_API_KEY") or os.getenv("SERPER_API_KEY")
 search = GoogleSerperAPIWrapper(serper_api_key=serper_api_key)
