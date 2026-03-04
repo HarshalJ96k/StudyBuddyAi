@@ -51,20 +51,14 @@ if "memory" not in st.session_state:
     st.session_state.materials_text = ""
 
 # Sidebar Configuration
-st.sidebar.title("🤖 AI Settings")
-model_choice = st.sidebar.selectbox(
-    "Choose AI Brain",
-    ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-3-flash-preview"],
-    index=0,
-    help="Switch if you hit 'Quota Exceeded' errors."
-)
+st.sidebar.title("🤖 Chat Controls")
 
 # New Chat Button (ChatGPT style)
 if st.sidebar.button("➕ New Chat", use_container_width=True):
     reset_chat()
 
 # Initialize LLM and Tools
-llm = ChatGoogleGenerativeAI(model=model_choice)
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
 search = GoogleSerperAPIWrapper()
 tools = [search.run]
 
@@ -235,6 +229,6 @@ if query:
             
         except Exception as e:
             if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-                st.error("🚫 **Quota Exceeded for this model!** Please switch the 'AI Brain' in the sidebar to 'gemini-2.0-flash' or 'gemini-1.5-flash' to continue.")
+                st.error("🚫 **Quota Exceeded!** The daily limit for the Gemini API has been reached. Please try again later.")
             else:
                 st.error(f"An error occurred: {str(e)}")
