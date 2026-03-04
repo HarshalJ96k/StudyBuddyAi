@@ -1,4 +1,5 @@
 import io
+import os
 import fitz  # PyMuPDF for reliable PDF parsing
 from docx import Document
 import pandas as pd
@@ -58,8 +59,12 @@ if st.sidebar.button("➕ New Chat", use_container_width=True):
     reset_chat()
 
 # Initialize LLM and Tools
-llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")
-search = GoogleSerperAPIWrapper()
+# Using gemini-1.5-flash for stability; ensure you have set GOOGLE_API_KEY in Streamlit Secrets or .env
+api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
+
+serper_api_key = st.secrets.get("SERPER_API_KEY") or os.getenv("SERPER_API_KEY")
+search = GoogleSerperAPIWrapper(serper_api_key=serper_api_key)
 tools = [search.run]
 
 # Agent Setup with Study Helper Prompt
