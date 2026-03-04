@@ -58,7 +58,7 @@ if st.sidebar.button("➕ New Chat", use_container_width=True):
     reset_chat()
 
 # Initialize LLM and Tools
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
+llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")
 search = GoogleSerperAPIWrapper()
 tools = [search.run]
 
