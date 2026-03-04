@@ -10,18 +10,13 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 import streamlit as st
 import re
-import youtube_transcript_api
-from youtube_transcript_api import YouTubeTranscriptApi
+from fpdf import FPDF
+from gtts import gTTS
 
 # Page Config for Better UI
 st.set_page_config(page_title="StudyGenie AI", page_icon="🤖", layout="wide")
 
 load_dotenv()
-
-# Initialize LLM and Tools - Using the most stable Gemini Pro model
-llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")
-search = GoogleSerperAPIWrapper()
-tools = [search.run]
 
 # Custom CSS for Sidebar Look
 st.markdown("""
@@ -44,10 +39,34 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Memory and Session State Initialization
+def reset_chat():
+    st.session_state.memory = MemorySaver()
+    st.session_state.history = []
+    st.session_state.materials_text = ""
+    st.rerun()
+
 if "memory" not in st.session_state:
     st.session_state.memory = MemorySaver()
     st.session_state.history = []
     st.session_state.materials_text = ""
+
+# Sidebar Configuration
+st.sidebar.title("🤖 AI Settings")
+model_choice = st.sidebar.selectbox(
+    "Choose AI Brain",
+    ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-3-flash-preview"],
+    index=0,
+    help="Switch if you hit 'Quota Exceeded' errors."
+)
+
+# New Chat Button (ChatGPT style)
+if st.sidebar.button("➕ New Chat", use_container_width=True):
+    reset_chat()
+
+# Initialize LLM and Tools
+llm = ChatGoogleGenerativeAI(model=model_choice)
+search = GoogleSerperAPIWrapper()
+tools = [search.run]
 
 # Agent Setup with Study Helper Prompt
 system_prompt = (
@@ -72,64 +91,30 @@ st.title("StudyGenie AI 🤖")
 st.markdown("### Your Intelligent Study Companion")
 st.write("Upload your notes, books, or data and ask anything related to your studies!")
 
-#Different Tabs at Home Page
-tab_chat,tab_video=st.tabs(["Chat","Video to Text"])
+# Function to create PDF from text
+def create_pdf(text):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("helvetica", size=12)
+    
+    # Basic cleanup for characters not in latin-1 (default for helvetica)
+    # Often AI responses have emojis or special quotes.
+    # Replace common non-latin-1 characters to avoid errors
+    text = text.replace('\u2013', '-').replace('\u2014', '-').replace('\u2018', "'").replace('\u2019', "'").replace('\u201c', '"').replace('\u201d', '"')
+    safe_text = text.encode('latin-1', 'ignore').decode('latin-1')
+    
+    pdf.multi_cell(0, 10, txt=safe_text)
+    return bytes(pdf.output())
 
-with tab_video:
-    st.title("🎥 Lecture Video to Notes")
-
-    video_url = st.text_input(
-        "Paste lecture video link (YouTube / Drive)",
-        placeholder="https://www.youtube.com/watch?v=..."
-    )
-
-    note_style = st.selectbox(
-        "Notes Format",
-        ["Short Notes", "Detailed Notes", "Bullet Points", "Exam-Oriented"]
-    )
-
-    def get_video_id(url):
-        pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
-        match = re.search(pattern, url)
-        return match.group(1) if match else None
-
-    if st.button("Generate Notes"):
-        if video_url:
-            with st.spinner("⏳ Extracting transcript and generating notes..."):
-                try:
-                    video_id = get_video_id(video_url)
-                    if not video_id:
-                        st.error("Invalid YouTube URL")
-                        st.stop()
-                    # Use fully qualified name to avoid any potential namespace issues
-                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                    transcript_text = " ".join([i['text'] for i in transcript_list])
-                    
-                    # Use the transcript to generate accurate notes
-                    prompt = f"""
-                    You are StudyGenie AI. Convert the following lecture transcript into {note_style}.
-                    Ensure the notes are accurate, easy to understand, and follow a logical structure.
-                    
-                    TRANSCRIPT:
-                    {transcript_text[:15000]} # Limit to handle long videos
-                    """
-                    
-                    response = llm.invoke(prompt)
-                    st.success("✅ Notes Generated")
-                    
-                    st.markdown("### 📘 Generated Notes")
-                    # Handle response content clean display
-                    raw_content = response.content
-                    if isinstance(raw_content, list):
-                        clean_content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_content])
-                    else:
-                        clean_content = str(raw_content)
-                    st.markdown(clean_content)
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-                    st.info("Try another video or ensure the video has subtitles/transcripts enabled.")
-        else:
-            st.warning("Please enter a YouTube video link")
+# Function to convert text to speech
+def read_aloud(text):
+    # Clean text from markdown for better speech
+    clean_text = re.sub(r'[*_#`]', '', text)
+    tts = gTTS(text=clean_text, lang='en')
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    fp.seek(0)
+    return fp
 
 def extract_text(files, format_choice):
     text_content = ""
@@ -161,7 +146,27 @@ def extract_text(files, format_choice):
             text_content += df.to_string() + "\n"
     return text_content
 
-# Sidebar for Study Material Hub
+# Main Chat Display
+for idx, message in enumerate(st.session_state.history):
+    st.chat_message(message["role"]).markdown(message["content"])
+    
+    # Handle export and read options for AI responses
+    if message["role"] == "ai":
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            st.download_button(
+                label="📥 PDF",
+                data=create_pdf(message["content"]),
+                file_name=f"StudyGenie_Response_{idx}.pdf",
+                mime="application/pdf",
+                key=f"export_chat_{idx}"
+            )
+        with col2:
+            if st.button(f"🔊 Read Aloud", key=f"read_{idx}"):
+                audio_fp = read_aloud(message["content"])
+                st.audio(audio_fp, format="audio/mp3")
+
+# Sidebar for Study Material Hub and Chat History
 st.sidebar.title("📚 Study Material Hub")
 choice = st.sidebar.selectbox(
     "Select Format",
@@ -178,17 +183,26 @@ with st.sidebar:
             st.session_state.materials_text = extracted_text
             st.success(f"Successfully loaded {len(uploaded_files)} file(s)!")
 
-with tab_chat:
-    # Chat Display
-    for message in st.session_state.history:
-        st.chat_message(message["role"]).markdown(message["content"])
+    # Chat History Sidebar Section
+    st.sidebar.divider()
+    st.sidebar.title("📜 Recent Chat History")
+    if not st.session_state.history:
+        st.sidebar.info("No chat history yet.")
+    else:
+        for idx, msg in enumerate(st.session_state.history):
+            if msg["role"] == "user":
+                # Display questions as expandable items in sidebar
+                with st.sidebar.expander(f"Q: {msg['content'][:30]}..."):
+                    st.write(msg["content"])
+                    # Find the AI response that follows
+                    if idx + 1 < len(st.session_state.history):
+                        st.info(st.session_state.history[idx+1]["content"])
 
-# Chat input MUST be at the top level (not inside tabs)
+
+# Chat input MUST be at the top level
 query = st.chat_input("Ask a study question...")
 
 if query:
-    # We can check which tab is currently active if needed, 
-    # but usually chat input at bottom is expected behavior.
     st.chat_message("user").markdown(query)
     st.session_state.history.append({"role": "user", "content": query})
 
@@ -200,21 +214,27 @@ if query:
 
     with st.spinner("Thinking..."):
         config = {"configurable": {"thread_id": "1"}}
-        response = agent.invoke(
-            {"messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": full_prompt}
-            ]},
-            config
-        )
+        try:
+            response = agent.invoke(
+                {"messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": full_prompt}
+                ]},
+                config
+            )
+            
+            # Handle various response formats from the model
+            raw_answer = response["messages"][-1].content
+            if isinstance(raw_answer, list):
+                answer = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_answer])
+            else:
+                answer = str(raw_answer)
 
-    # Handle various response formats from the model
-    raw_answer = response["messages"][-1].content
-    if isinstance(raw_answer, list):
-        answer = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_answer])
-    else:
-        answer = str(raw_answer)
-
-    st.session_state.history.append({"role": "ai", "content": answer})
-    st.chat_message("ai").markdown(answer)
-    # Note: Because the script reruns, the new message will appear inside the Chat tab on the next pass.
+            st.session_state.history.append({"role": "ai", "content": answer})
+            st.rerun()
+            
+        except Exception as e:
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                st.error("🚫 **Quota Exceeded for this model!** Please switch the 'AI Brain' in the sidebar to 'gemini-2.0-flash' or 'gemini-1.5-flash' to continue.")
+            else:
+                st.error(f"An error occurred: {str(e)}")

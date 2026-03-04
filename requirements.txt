@@ -12,4 +12,5 @@ python-docx
 pandas
 python-pptx
 openpyxl
-youtube-transcript-api
+fpdf2
+gTTS
